@@ -1,1 +1,506 @@
-# -OM-95-
+OMKO 95
+<?php
+namespace tbl0605\Spreadsheet;
+/**
+ * CSV managing class: Store and retrieve data from CSV files<br>
+ * => can import a csv file and iterate over the items<br>
+ * => allows to specify the separator and the enclosure
+ *
+ * Requires at least PHP 5.3
+ *
+ * HowTo use examples:<br>
+ * <code>
+ * <pre>
+ * $csvIterator = new \tbl0605\Spreadsheet\CsvIterator('/path/to/file', true, '|', '"');
+ * foreach ($csvIterator as $values) {
+ * print_r($values);
+ * }
+ * $it = new \tbl0605\Spreadsheet\CsvIterator('/path/to/file', true, '|', '"');
+ * while ($it->valid())
+ * {
+ * $key = $it->key();
+ * $value = $it->current();
+ * // ...
+ * $it->next();
+ * }
+ * </pre>
+ * </code>
+ *
+ * @author MO mortanon at gmail dot com, 14-Oct-2005 08:05
+ * @author TK Tobias Kluge, http://enarion.net
+ * @author Thierry BLIND
+ * @package Muta\Spreadsheet
+ *
+ * @version 1.0 - 2005-10-14 by MO
+ * @version 1.1 - 2006-04-22 by TK
+ *          - backport to PHP 4
+ *          - added usage of enclosure
+ *          - added support of headers
+ * @version 2.0 - 2006-05 by Thierry BLIND
+ *          - implements Iterator and requires PHP 5.3 (but backporting should be easy)
+ *          - lots of code changes and fixes
+ *
+ * @link http://www.phpclasses.org/browse/package/2480/
+ * @link http://www.php.net/manual/en/function.fgetcsv.php#57802
+ */
+class CsvIterator implements \Iterator
+{
+const CSV_DEFAULT_SEPARATOR = ';';
+const CSV_DEFAULT_ENCLOSURE = '"';
+/**
+     * The pointer to the cvs file.
+     *
+     * @var resource
+     * @access private
+     */
+private $_filePointer = null;
+/**
+     * The current element, which will
+     * be returned on each iteration.
+     *
+     * @var array
+     * @access private
+     */
+private $_currentElement = null;
+/**
+     * The maximal line length.
+     *
+     * @var integer
+     * @see fgetcsv()
+     * @access protected
+     */
+protected $maxLineLength = 4096;
+/**
+     * The row counter.
+     *
+     * @var int
+     * @access protected
+     */
+protected $rowCounter = null;
+/**
+     * The delimiter for the csv file.
+     *
+     * @var string
+     * @access protected
+     */
+protected $delimiter = null;
+/**
+     * The enclosure for the csv file.
+     *
+     * @var string
+     * @access protected
+     */
+protected $enclosure = null;
+/**
+     * Specifies if header should be read and used.
+     *
+     * @var bool
+     * @access protected
+     */
+protected $withHeader = false;
+/**
+     * Contains the header if header is used.
+     *
+     * @var array
+     * @access protected
+     */
+protected $header = array();
+/**
+     * Returns the maximal line length.
+     *
+     * @return int
+     */
+public function getMaxLineLength()
+    {
+return $this->maxLineLength;
+    }
+/**
+     * Set the maximal line length.
+     *
+     * @param int $maxLineLength
+     * @return void
+     */
+public function setMaxLineLength($maxLineLength)
+    {
+$this->maxLineLength = $maxLineLength;
+    }
+/**
+     * Returns the delimiter value.
+     *
+     * @return string
+     */
+public function getDelimiter()
+    {
+return $this->delimiter;
+    }
+/**
+     * Set the delimiter value.
+     *
+     * @param string $delimiter
+     * @return void
+     */
+public function setDelimiter($delimiter)
+    {
+$this->delimiter = $delimiter;
+    }
+/**
+     * Returns the enclosure value.
+     *
+     * @return string
+     */
+public function getEnclosure()
+    {
+return $this->enclosure;
+    }
+/**
+     * Set the enclosure value.
+     *
+     * @param string $enclosure
+     * @return void
+     */
+public function setEnclosure($enclosure)
+    {
+$this->enclosure = $enclosure;
+    }
+/**
+     * Returns the withHeader value.
+     *
+     * @return bool
+     */
+public function getWithHeader()
+    {
+return $this->withHeader;
+    }
+/**
+     * Set the withHeader value.
+     *
+     * @param bool $withHeader
+     * @return void
+     */
+public function setWithHeader($withHeader)
+    {
+$this->withHeader = (bool) $withHeader;
+    }
+/**
+     * Returns the header value.
+     *
+     * @return array
+     */
+public function getHeader()
+    {
+return $this->header;
+    }
+/**
+     * This is the constructor.It try to open the csv file.The method throws an exception
+     * on failure.
+     *
+     * @param string $file
+     *            The csv filename.
+     * @param bool $withHeader
+     *            Specify if file contains header and should be used.
+     * @param string $delimiter
+     *            The delimiter.
+     * @param string $enclosure
+     *            The enclosure.
+     * @param bool $append
+     *            When true, place the file pointer at the end of the file in <b>WRITE</b> mode, otherwise at the beginning of the file in <b>READ</b> mode.
+     * @throws \Exception
+     */
+public function __construct($file, $withHeader = true, $delimiter = CsvIterator::CSV_DEFAULT_SEPARATOR, $enclosure = CsvIterator::CSV_DEFAULT_ENCLOSURE, $append = false)
+    {
+$this->_filePointer = @fopen($file, ($append ? 'a+' : 'r+'));
+if ($this->_filePointer === false) {
+throw new \Exception('The file "' . $file . '" cannot be read or written.');
+        }
+$this->delimiter = $delimiter;
+$this->enclosure = $enclosure;
+$this->withHeader = (bool) $withHeader;
+$this->rewind(! $append);
+    }
+/**
+     * This is the destructor.
+     */
+public function __destruct()
+    {
+$this->tearDown();
+    }
+/**
+     * This method resets the file pointer.
+     *
+     * @param bool $readHeader
+     * @return void
+     */
+    #[\ReturnTypeWillChange]
+public function rewind($readHeader = true)
+    {
+$this->rowCounter = 0;
+$this->_currentElement = null;
+$this->header = array();
+$this->toBegin();
+if (! $readHeader) {
+return;
+        }
+if ($this->withHeader /*&& $this->rowCounter == 0*/) {
+$this->next();
+if (! $this->valid()) {
+// The end of file was reached (empty file),
+// or a reading error has occurred...
+return;
+            }
+$this->header = $this->_currentElement;
+foreach ($this->header as $key => $value)
+$this->header[$key] = trim((string) $value);
+$this->rowCounter ++;
+        }
+$this->next();
+    }
+/**
+     * This method returns the current csv row as a 1 dimensional array.
+     * Warning: an empty (or invalid) row is always returned as an empty array.
+     *
+     * @return array The current csv row as a 1 dimensional array
+     */
+    #[\ReturnTypeWillChange]
+public function current()
+    {
+// check for invalid currentElement
+if (! is_array($this->_currentElement) || ! sizeof($this->_currentElement)) {
+return array();
+        }
+// handle header
+if ($this->withHeader) {
+// apply header to currentElement
+$tmp = array();
+foreach ($this->header as $value)
+$tmp[$value] = null;
+foreach ($this->_currentElement as $i => $value) {
+// $tmp[$i] = trim((string) $value); // uncomment this line to use indices as array keys
+if (array_key_exists($i, $this->header))
+$tmp[$this->header[$i]] = $value === null ? null : trim((string) $value);
+            }
+$this->_currentElement = $tmp;
+        }
+$this->rowCounter ++;
+return $this->_currentElement;
+    }
+/**
+     * This method returns the current row number.
+     *
+     * @return int The current row number
+     */
+    #[\ReturnTypeWillChange]
+public function key()
+    {
+return $this->rowCounter;
+    }
+/**
+     * This method moves the iterator to the next key/value pair.
+     *
+     * @return void no result
+     * @throws \Exception
+     */
+    #[\ReturnTypeWillChange]
+public function next()
+    {
+// https://www.php.net/manual/en/function.fgetcsv.php
+// The locale settings are taken into account by this function. If LC_CTYPE is e.g. en_US.UTF-8,
+// files in one-byte encodings may be read wrongly by this function.
+$this->_currentElement = fgetcsv($this->_filePointer, $this->maxLineLength, $this->delimiter, $this->enclosure);
+if ($this->_currentElement === null) {
+// NB: $this->_currentElement can only be null
+// when $this->_filePointer is invalid.
+throw new \Exception('Cannot get next row.');
+        }
+// Bug #48313: fgetcsv() does not report empty row as documented
+// PHP Version:	5.2.9
+$emptyLine = version_compare(PHP_VERSION, '5.2.9', '<') ? array(
+''
+        ) : array(
+null
+        );
+// NB: array_unique(array(null, '')) => array(null)
+// NB: array_unique(array('', null)) => array('')
+if (is_array($this->_currentElement) && ($this->_currentElement === $emptyLine || $this->_currentElement === array(
+null
+        ))) {
+$this->_currentElement = array();
+        }
+    }
+/**
+     * This method checks if the current row is a valid row.
+     *
+     * @return bool If the current row is a valid row.
+     */
+    #[\ReturnTypeWillChange]
+public function valid()
+    {
+return is_array($this->_currentElement);
+    }
+/**
+     * This method closes all open files and shuts this object down.
+     *
+     * @return void no result
+     */
+public function tearDown()
+    {
+if (is_resource($this->_filePointer)) {
+            fclose($this->_filePointer);
+        }
+$this->_filePointer = null;
+    }
+/**
+     * This method returns the next non-empty row.
+     *
+     * @param int|null $key
+     *            reference to current row number
+     * @param bool $readEmptyRows
+     * @return array The csv row as a 1 dimensional array, false otherwise
+     */
+public function read(&$key = null, $readEmptyRows = false)
+    {
+while ($this->valid()) {
+$key = $this->key();
+$row = $this->current();
+$this->next();
+if (is_array($row) && ($readEmptyRows || $row !== array())) {
+return $row;
+            }
+        }
+return false;
+    }
+/**
+     * This method returns all non-empty rows from the current csv file.
+     *
+     * @param bool $readEmptyRows
+     * @return array The csv rows as a 2 dimensional array
+     */
+public function readAll($readEmptyRows = false)
+    {
+$this->rewind();
+$key = null;
+$csv = array();
+while (($row = $this->read($key, $readEmptyRows)) !== false) {
+$csv[$key] = $row;
+        }
+return $csv;
+    }
+/**
+     * This method writes a row into the current csv file.
+     *
+     * @param array $add
+     * @param bool $toEnd
+     * @return int The currently written csv row length, false on failure
+     */
+public function write(array $add, $toEnd = true)
+    {
+if ($toEnd) {
+$this->toEnd();
+        }
+//fwrite($this->_filePointer, implode($this->delimiter, $add));
+// XXX: does writing a line in the middle of a file realign the rest of the file?
+        if ($this->withHeader) {
+// We check that we write the (necessary) data in the same order as the headers.
+return fputcsv($this->_filePointer, array_intersect_key($add, $this->header), $this->delimiter, $this->enclosure);
+        } else {
+return fputcsv($this->_filePointer, $add, $this->delimiter, $this->enclosure);
+        }
+    }
+/**
+     * This method writes the header row into the csv file.
+     *
+     * @param array $header
+     * @return int The currently written csv header row length, false on failure
+     */
+public function writeHeader(array $header)
+    {
+// We force $this->withHeader to false so that the first file write() works correctly,
+// because array_intersect_key($this->header, $this->header) is -at this point- equal to array().
+$this->withHeader = false;
+$this->header = array();
+$this->truncate();
+$ret = $this->write($header, false);
+$this->withHeader = true;
+$this->header = $header;
+return $ret;
+    }
+/**
+     * seek a position into CSV file
+     *
+     * @param int $position
+     * @param int $offset
+     * @return void
+     * @throws \Exception
+     */
+public function seek(/*integer*/ $position = 0, /*integer*/ $offset = 0)
+    {
+if (! is_integer($position)) {
+throw new \Exception('Illegal parameter position. Must be integer.');
+        }
+if (! is_integer($offset)) {
+throw new \Exception('Illegal parameter offset. Must be integer.');
+        }
+if ($position < 0) {
+if (fseek($this->_filePointer, $offset, SEEK_SET) < 0) {
+throw new \Exception("Cannot seek cursor in CSV file on '" . $offset . "'.");
+            }
+        } elseif ($position > 0) {
+if (fseek($this->_filePointer, $offset, SEEK_END) < 0) {
+throw new \Exception("Cannot seek cursor in CSV file on END + '" . $offset . "'.");
+            }
+        } else {
+if (fseek($this->_filePointer, $offset, SEEK_CUR) < 0) {
+throw new \Exception("Cannot seek cursor in CSV file on CURRENT + '" . $offset . "'.");
+            }
+        }
+    }
+/**
+     * truncate CSV file
+     *
+     * @return void
+     * @throws \Exception
+     */
+public function truncate()
+    {
+$this->toBegin();
+if (! ftruncate($this->_filePointer, 0)) {
+throw new \Exception('Cannot truncate CSV file.');
+        }
+    }
+/**
+     * flush CSV file
+     *
+     * @return void
+     * @throws \Exception
+     */
+public function flush()
+    {
+if (! fflush($this->_filePointer)) {
+throw new \Exception('Cannot flush CSV file.');
+        }
+    }
+/**
+     * seek CSV file to begin
+     *
+     * @return void
+     * @throws \Exception
+     */
+public function toBegin()
+    {
+if (! rewind($this->_filePointer)) {
+throw new \Exception('Cannot seek cursor in CSV file to begin.');
+        }
+    }
+/**
+     * seek CSV file to end
+     *
+     * @return void
+     * @throws \Exception
+     */
+public function toEnd()
+    {
+if (fseek($this->_filePointer, 0, SEEK_END) < 0) {
+throw new \Exception('Cannot seek cursor in CSV file to end.');
+        }
+    }
+}
+?>
