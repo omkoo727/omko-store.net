@@ -1,1 +1,1 @@
-# -OM-95-
+#omko-store
